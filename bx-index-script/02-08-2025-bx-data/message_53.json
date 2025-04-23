@@ -1,0 +1,14 @@
+{
+  "value": {
+    "total_value": 2212.51854114461,
+    "divisor_batch": "2024-12-23 21:00:00",
+    "delivered_count": 25,
+    "stage": "completed",
+    "total_count": 25,
+    "id": "0d6892b0-644c-4c85-aee8-13ee9d2d62bb-0",
+    "time": "2025-02-10 21:00:00",
+    "type": "eod",
+    "value": 1040.880907092961,
+    "completed_at": "2025-02-10 21:02:24"
+  }
+}
