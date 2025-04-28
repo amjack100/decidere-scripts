@@ -1,71 +1,139 @@
-# This is a sample Python script.
-
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-import os
-import pandas as pd
+#!/usr/bin/env python3
 import re
+import logging
+from pathlib import Path
+from typing import List, Dict
 
+import pandas as pd
+
+# ---- Configuration ----
 COLUMN_ROW_NUMBER = 10
+LOG_LEVEL = logging.INFO
 
-def combine_files(directory, files,output_file):
-    df_list = []
-    print(f'Combining {len(files)} files')
-    # Iterate through all the files in the directory
-    expected_output_rows = []
-    expected_columns = 0
+# Map a group name to the regex that selects its files and final CSV suffix
+GROUPS: Dict[str, Dict[str, str]] = {
+    "MF":        {"pattern": r"^MF.*\.xlsx$",                   "suffix": "_MF.csv"},
+    "ETF":       {"pattern": r"^ETF.*\.xlsx$",                  "suffix": "_ETF.csv"},
+    "SMA":       {"pattern": r"^SMA.*\.xlsx$",                  "suffix": "_SMA.csv"},
+    "Envestnet": {"pattern": r"(Envestnet\sStrategies|AMPF\sSelect\sStrategies).*\.xlsx$",
+                  "suffix": "_EnvestnetPlus.csv"},
+    "MS_Extract": {"pattern": r"^(MF|ETF|SMA).*\.xlsx$",         "suffix": "_MS_Extract.csv"},
+}
 
-    for i, file in enumerate(files):
-        print(f'{i + 1} out of {len(files)}')
-        # Skip files that are not Excel files
-        header_row = 10
-        if re.search(r'AMPF\sSelect\sStrategies', file):
-            header_row = 10
+# ---- Setup logging ----
+logging.basicConfig(level=LOG_LEVEL,
+                    format="%(asctime)s %(levelname)-8s %(message)s")
 
-        df = pd.read_excel(directory + file,header=header_row - 1)
-        # df.columns = columns.columns
-        print(file)
-        print(f'{df.shape[0]} rows')
-        expected_output_rows.append(df.shape[0])
-        expected_columns = df.shape[1]
+def get_header_row(file_name: Path) -> int:
+    """
+    Determine which 1-based row to use as header for this file.
+    Can be customized per-file by inspecting file_name.
+    """
+    # Example override: AMPF Select Strategies also uses the default
+    if re.search(r"AMPF\sSelect\sStrategies", file_name.name):
+        return COLUMN_ROW_NUMBER
+    return COLUMN_ROW_NUMBER
 
-        for index, row in df.iterrows():
-            if isinstance(row[0],str) and len(row[0]) == 10:
-                df_list.append(row)
+def extract_valid_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep only those rows where the first column is a string of length 10.
+    """
+    first_col = df.columns[0]
+    mask = (
+        df[first_col].apply(lambda x: isinstance(x, str) and len(x) == 10)
+    )
+    return df.loc[mask]
 
-    print('-------------------')
-    print(f'Expected shape: {sum(expected_output_rows)} rows, {expected_columns} columns')
-    # Concatenate all the data frames into one big data frame
-    df_big = pd.concat(df_list,axis=1).T
-    print(f'Actual shape: {df_big.shape[0]} rows, {df_big.shape[1]} columns')
-    print(f'Difference: {sum(expected_output_rows) - df_big.shape[0]} rows, {expected_columns - df_big.shape[1]} columns')
+def combine_files(
+    directory: Path,
+    files: List[Path],
+    output_file: Path,
+    header_row_fn=get_header_row,
+    filter_fn=extract_valid_rows,
+) -> None:
+    """
+    Reads each Excel file, filters its rows, concatenates them,
+    and writes out a single CSV.
+    """
+    if not files:
+        logging.warning("No files to combine for %s", output_file.name)
+        return
 
-    # print(f'Actual output columns: {df_big.shape[1]}')
+    logging.info("Combining %d files into %s", len(files), output_file.name)
 
-    df_big.to_csv(directory + output_file, index=False)
+    dfs: List[pd.DataFrame] = []
+    total_expected_rows = 0
+    expected_columns = None
+
+    for idx, fp in enumerate(files, start=1):
+        hrow = header_row_fn(fp)
+        logging.info("[%d/%d] Reading %s (header row=%d)",
+                     idx, len(files), fp.name, hrow)
+
+        df = pd.read_excel(fp, header=hrow - 1)
+        nrows, ncols = df.shape
+        logging.info("  → raw rows=%d, cols=%d", nrows, ncols)
+
+        total_expected_rows += nrows
+        expected_columns = ncols if expected_columns is None else expected_columns
+
+        valid = filter_fn(df)
+        dfs.append(valid)
+
+    # concatenate all filtered frames
+    result = pd.concat(dfs, ignore_index=True)
+    actual_rows, actual_cols = result.shape
+
+    logging.info("Expected total rows: %d, columns: %d",
+                 total_expected_rows, expected_columns)
+    logging.info("Actual   total rows: %d, columns: %d",
+                 actual_rows, actual_cols)
+    logging.info("Differences: rows=%d, cols=%d",
+                 total_expected_rows - actual_rows,
+                 expected_columns - actual_cols if expected_columns is not None else 0)
+
+    result.to_csv(output_file, index=False)
+    logging.info("Written combined CSV to %s", output_file)
+
+def find_excel_files(directory: Path) -> List[Path]:
+    """Return all .xlsx files under the given directory."""
+    return sorted(directory.glob("*.xlsx"))
+
+
+def group_files(
+    files: List[Path],
+    groups: Dict[str, Dict[str, str]]
+) -> Dict[str, List[Path]]:
+    """
+    For each group, select the files whose names match that group's pattern.
+    Returns a map group_name → list of matching Path objects.
+    """
+    grouped = {}
+    for name, info in groups.items():
+        pat = re.compile(info["pattern"])
+        matched = [f for f in files if pat.search(f.name)]
+        grouped[name] = matched
+    return grouped
+
 
 def main():
-    # Set the directory where the Excel files are stored
-    directory = '/home/andy/Documents/Morningstar-January-2025/'
+    # 1) Base directory
+    directory = Path("/home/andy/Documents/Morningstar-March-2025/")
+    if not directory.is_dir():
+        logging.error("Directory %s does not exist!", directory)
+        return
 
-    # Create an empty list to store the data frames
-    excel_files = [file for file in os.listdir(directory) if file.endswith('.xlsx')]
-    MF_files = [file for file in excel_files if re.match('^MF', file)]
-    ETF_files = [file for file in excel_files if re.match('^ETF', file)]
-    SMA_files = [file for file in excel_files if re.match('^SMA', file)]
-    MS_Extract_files = MF_files + ETF_files + SMA_files
-    EnvestnetPlus_files = [file for file in excel_files if re.search(r'Envestnet\sStrategies|AMPF\sSelect\sStrategies', file)]
+    # 2) Find and group files
+    all_files = find_excel_files(directory)
+    grouped  = group_files(all_files, GROUPS)
 
-    combine_files(directory, MF_files, '_MF.csv')
-    combine_files(directory, ETF_files, '_ETF.csv')
-    combine_files(directory, SMA_files, '_SMA.csv')
-    combine_files(directory, EnvestnetPlus_files, '_EnvestnetPlus.csv')
-    combine_files(directory, MS_Extract_files, '_MS_Extract.csv')
+    # 3) Combine each group
+    for name, info in GROUPS.items():
+        files       = grouped.get(name, [])
+        out_suffix  = info["suffix"]
+        out_path    = directory / out_suffix
+        combine_files(directory, files, out_path)
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
