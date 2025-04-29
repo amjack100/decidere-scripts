@@ -2,12 +2,6 @@
 
 This repository contains various standalone Python scripts used to support the Decidere project.
 
-## Table of Contents
-
-- [Scripts](#scripts)
-- [Setup](#setup)
-- [Usage](#usage)
-
 ## Scripts
 
 | Script | Description |
