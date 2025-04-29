@@ -7,26 +7,6 @@ import math
 import os
 
 
-
-    # Decode base64 string
-
-
-    # Save to a temporary JSON file
-    temp_credentials_path = '/tmp/gcp_credentials.json'
-    with open(temp_credentials_path, 'w') as f:
-        f.write(credentials_json)
-
-    # Set environment variable
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_credentials_path
-
-# df = pd.read_csv('reshaped_file.csv')
-
-
-
-# Authenticate with the base64 credentials
-
-
-
 def wipe_calc_data_table():
     client = bigquery.Client()
     table_id = "decidere.bx_index.calc_data"
@@ -104,11 +84,6 @@ def calculate_and_insert_returns():
 
         curr_row = curr_df.iloc[0]
         curr_value = curr_row['value']
-
-        # Helper to get value for a specific date for the current id
-
-            # row = sub_df[sub_df['date'] == target]
-            # return row.iloc[0]['value'] if not row.empty else None
 
         value_7day = get_value(sub_df, target_date - timedelta(days=7))
         value_30day = get_value(sub_df, target_date - timedelta(days=30))
